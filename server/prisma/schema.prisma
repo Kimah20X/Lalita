@@ -1,0 +1,38 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  fullName  String
+  email     String   @unique
+  password  String
+  role      String   @default("user")
+  balance   Float    @default(0.0)
+  createdAt DateTime @default(now())
+  Savings   Savings[]
+}
+
+model Savings {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  amount          Float
+  transactionType String
+  createdAt       DateTime @default(now())
+  user            User     @relation(fields: [userId], references: [id])
+}
+
+model Video {
+  id          Int      @id @default(autoincrement())
+  title       String
+  category    String
+  url         String
+  language    String
+  uploadedBy  Int
+  createdAt   DateTime @default(now())
+}
