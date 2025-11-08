@@ -7,7 +7,7 @@ dotenv.config();
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-// Generate JWT Token
+// 🔐 Generate JWT Token
 const generateToken = (user) => {
   return jwt.sign(
     { id: user.id, email: user.email, role: user.role },
@@ -16,103 +16,140 @@ const generateToken = (user) => {
   );
 };
 
+// ✅ REGISTER USER
+export const registerUser = async (req, res, next) => {
+  try {
+    const { full_name, email, password, role = "user" } = req.body;
 
-// USER SIGNUP
-export const signup = async (email, password, fullName, role = 'user') => {
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: { data: { fullName, role } },
-  });
-  if (error) throw error;
-  return data;
+    if (!full_name || !email || !password) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    // Check if email exists
+    const { data: existingUser } = await supabase
+      .from("users")
+      .select("*")
+      .eq("email", email)
+      .single();
+
+    if (existingUser) {
+      return res.status(400).json({ message: "Email already registered" });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Insert user
+    const { data: newUser, error } = await supabase
+      .from("users")
+      .insert([
+        { full_name, email, password: hashedPassword, role },
+      ])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    const token = generateToken(newUser);
+    res.status(201).json({
+      message: "User registered successfully",
+      user: { id: newUser.id, email: newUser.email, role: newUser.role },
+      token,
+    });
+  } catch (error) {
+    next(error);
+  }
 };
 
-// USER LOGIN
-export const login = async (email, password) => {
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  });
-  if (error) throw error;
-  return data;
+// ✅ LOGIN USER
+export const loginUser = async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email and password are required" });
+    }
+
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("email", email)
+      .single();
+
+    if (error || !user) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    const token = generateToken(user);
+    res.json({
+      message: "Login successful",
+      user: { id: user.id, email: user.email, role: user.role },
+      token,
+    });
+  } catch (error) {
+    next(error);
+  }
 };
 
-// GET CURRENT USER (from token)
-export const getUser = async (token) => {
-  const { data, error } = await supabase.auth.getUser(token);
-  if (error) throw error;
-  return data.user;
+
+// ✅ GET PROFILE
+export const getUserProfile = async (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) return res.status(401).json({ error: "Unauthorized. Token missing." });
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("id, full_name, email, role, language")
+      .eq("id", decoded.id)
+      .single();
+
+    if (error || !user) return res.status(404).json({ error: "User not found" });
+
+    res.json({ user });
+  } catch (error) {
+    next(error);
+  }
 };
 
-// // ✅ Register
-// export const registerUser = async (req, res, next) => {
-//   try {
-//     const { full_name, email, password, role } = req.body;
+// ✅ UPDATE PROFILE
+export const updateUserProfile = async (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) return res.status(401).json({ error: "Unauthorized. Token missing." });
 
-//     if (!full_name || !email || !password) {
-//       return res.status(400).json({ message: "All fields are required" });
-//     }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const { full_name, language } = req.body;
 
-//     // Check if email already exists
-//     const { data: existingUser } = await supabase
-//       .from("users")
-//       .select("*")
-//       .eq("email", email)
-//       .single();
+    const { data, error } = await supabase
+      .from("users")
+      .update({ full_name, language })
+      .eq("id", decoded.id)
+      .select("id, full_name, email, language, role")
+      .single();
 
-//     if (existingUser) {
-//       return res.status(400).json({ message: "Email already registered" });
-//     }
+    if (error) throw error;
 
-//     // Hash password
-//     const hashedPassword = await bcrypt.hash(password, 10);
+    res.json({ message: "Profile updated successfully", user: data });
+  } catch (error) {
+    next(error);
+  }
+};
 
-//     // Insert into Supabase
-//     const { data: newUser, error } = await supabase.from("users").insert([
-//       { full_name, email, password: hashedPassword, role: role || "user" },
-//     ]).select().single();
-
-//     if (error) throw error;
-
-//     const token = generateToken(newUser);
-//     res.status(201).json({
-//       message: "User registered successfully",
-//       user: { id: newUser.id, email: newUser.email },
-//       token,
-//     });
-//   } catch (error) {
-//     next(error);
-//   }
-// };
-
-// // ✅ Login
-// export const loginUser = async (req, res, next) => {
-//   try {
-//     const { email, password } = req.body;
-
-//     const { data: user, error } = await supabase
-//       .from("users")
-//       .select("*")
-//       .eq("email", email)
-//       .single();
-
-//     if (error || !user) {
-//       return res.status(401).json({ message: "Invalid credentials" });
-//     }
-
-//     const isMatch = await bcrypt.compare(password, user.password);
-//     if (!isMatch) {
-//       return res.status(401).json({ message: "Invalid credentials" });
-//     }
-
-//     const token = generateToken(user);
-//     res.json({
-//       message: "Login successful",
-//       user: { id: user.id, email: user.email, role: user.role },
-//       token,
-//     });
-//   } catch (error) {
-//     next(error);
-//   }
-// };
+// ✅ LOGOUT
+export const logoutUser = async (req, res, next) => {
+  try {
+    // If using stateless JWTs, logout is frontend-handled (client just deletes token)
+    // But you can also store blacklisted tokens or timestamps
+    res.json({ message: "Logout successful. Please discard your token on client side." });
+  } catch (error) {
+    next(error);
+  }
+};

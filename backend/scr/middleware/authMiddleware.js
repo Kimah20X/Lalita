@@ -27,6 +27,23 @@ export const authorize = (role) => (req, res, next) => {
   next();
 };
 
+export const verifyToken = (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Token missing." });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    req.user = decoded; // attach decoded info to request (id, email, role)
+    next();
+  } catch (error) {
+    return res.status(403).json({ error: "Invalid or expired token." });
+  }
+}; 
+
 export const authMiddleware = (req, res, next) => {
   const authHeader = req.headers.authorization;
 

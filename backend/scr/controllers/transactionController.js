@@ -1,4 +1,4 @@
-import { supabase } from '../supabaseClient.js';
+import { supabase } from '../config/supabaseClient.js';
 
 // Log transaction
 export const logTransaction = async (userId, amount, type, status = 'pending') => {

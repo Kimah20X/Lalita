@@ -1,145 +1,165 @@
+// ✅ Routes included:
+// POST /wallet/create → Create a new wallet
+// POST /wallet/deposit → Deposit funds (Monnify integration)
+// POST /wallet/withdraw → Withdraw funds
+// GET /wallet/balance/:userId → Get user balance
+// POST /wallet/callback → Handle Monnify webhook callback
+
 import axios from 'axios';
-import { supabase } from '../supabaseClient.js';
+import { supabase } from '../config/supabaseClient.js';
 import { logTransaction } from './transactionController.js';
 
-
-const MONNIFY_BASE = process.env.MONNIFY_BASE_URL; // e.g., sandbox URL
+// 🔐 ENV CONFIG
+const MONNIFY_BASE = process.env.MONNIFY_BASE_URL;
 const MONNIFY_CLIENT_ID = process.env.MONNIFY_CLIENT_ID;
 const MONNIFY_API_KEY = process.env.MONNIFY_API_KEY;
+const MONNIFY_CONTRACT_CODE = process.env.MONNIFY_CONTRACT_CODE;
 
-async function initiatePayment(userId, amount) {
-  // 1. Create payment request with Monnify
-  const payload = {
-    amount: amount,
-    customerName: 'User Name or fetch from DB',
-    customerEmail: 'user@example.com',
-    currencyCode: 'NGN',
-    contractCode: process.env.MONNIFY_CONTRACT_CODE,
-    // optional fields: paymentReference, redirectURL, etc.
-  };
-  
+// 🧩 HELPER FUNCTIONS
+
+// Get Monnify auth header
+const getMonnifyAuthHeader = () => {
   const auth = Buffer.from(`${MONNIFY_CLIENT_ID}:${MONNIFY_API_KEY}`).toString('base64');
-  
+  return `Basic ${auth}`;
+};
+
+// Initiate payment with Monnify
+async function initiatePayment(userId, amount) {
+  const payload = {
+    amount,
+    customerName: 'User Name', // Ideally fetch from users table
+    customerEmail: 'user@example.com',
+    paymentReference: `TX-${Date.now()}-${userId}`,
+    paymentDescription: 'Wallet Deposit',
+    currencyCode: 'NGN',
+    contractCode: MONNIFY_CONTRACT_CODE,
+    redirectUrl: `${process.env.BASE_URL}/payment-success`,
+  };
+
   const { data } = await axios.post(
     `${MONNIFY_BASE}/api/v1/merchant/transactions/initiate`,
     payload,
     {
       headers: {
-        Authorization: `Basic ${auth}`,
-        'Content-Type': 'application/json'
-      }
+        Authorization: getMonnifyAuthHeader(),
+        'Content-Type': 'application/json',
+      },
     }
   );
-  
-  return data; // contains paymentReference, paymentURL etc.
+
+  return data;
 }
 
-// Create wallet for a new user
+// 🏦 WALLET CONTROLLERS
+
+// ✅ Create Wallet
 export const createWallet = async (userId) => {
   const { data, error } = await supabase
     .from('savings')
     .insert({ user_id: userId, amount: 0, goal: 0 })
     .select();
 
-  if (error) throw error;
+  if (error) throw new Error(error.message);
   return data[0];
 };
 
-// Deposit money
-
+// ✅ Deposit Funds
 export const deposit = async (req, res) => {
   try {
     const { userId, amount } = req.body;
     if (amount <= 0) throw new Error('Invalid deposit amount');
-    
-    // 1. create payment request
+
     const paymentData = await initiatePayment(userId, amount);
 
-    // 2. respond to frontend with paymentData.paymentURL
-    // frontend can redirect user to payment flow or show QR etc.
-    res.json({ paymentUrl: paymentData.paymentUrl, reference: paymentData.paymentReference });
-    
-    // 3. We log the transaction in “pending” state
     await logTransaction(userId, amount, 'deposit', 'pending', paymentData.paymentReference);
-    
+
+    res.json({
+      message: 'Payment initiated successfully',
+      paymentUrl: paymentData.responseBody?.checkoutUrl,
+      reference: paymentData.responseBody?.paymentReference,
+    });
+  } catch (err) {
+    console.error('Deposit error:', err);
+    res.status(400).json({ error: err.message });
+  }
+};
+
+// ✅ Withdraw Funds
+export const withdraw = async (req, res) => {
+  try {
+    const { userId, amount } = req.body;
+    if (amount <= 0) throw new Error('Invalid withdrawal amount');
+
+    const { data, error } = await supabase
+      .from('savings')
+      .select('amount')
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !data) throw new Error('Wallet not found');
+    if (data.amount < amount) throw new Error('Insufficient balance');
+
+    await supabase
+      .from('savings')
+      .update({ amount: data.amount - amount })
+      .eq('user_id', userId);
+
+    await logTransaction(userId, amount, 'withdrawal', 'success', `WD-${Date.now()}`);
+
+    res.json({ message: 'Withdrawal successful', balance: data.amount - amount });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 };
 
-// routes/paymentCallback.js
-router.post('/monnify/callback', async (req, res) => {
+// ✅ Get Wallet Balance
+export const getBalance = async (req, res) => {
   try {
-    const { paymentReference, status, amount, customerEmail, ...rest } = req.body;
+    const { userId } = req.params;
+    const { data, error } = await supabase
+      .from('savings')
+      .select('amount')
+      .eq('user_id', userId)
+      .single();
 
-    // Validate signature if Monnify provides one
-    // Then:
-    if (status === 'PAID') {
-      // update your savings table: add amount to user’s savings
-      const userId = await getUserIdByPaymentReference(paymentReference); // implement lookup
-      await supabase.from('savings')
-        .update({ amount: supabase.raw('amount + ?', [amount]) })
-        .eq('user_id', userId);
-      
-      // Update transaction to success
-      await supabase.from('transactions')
+    if (error || !data) throw new Error('Wallet not found');
+
+    res.json({ userId, balance: data.amount });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+};
+
+// ✅ Monnify Callback (Webhook)
+export const monnifyCallback = async (req, res) => {
+  try {
+    const { paymentReference, paymentStatus, amountPaid } = req.body;
+
+    const { data: tx } = await supabase
+      .from('transactions')
+      .select('user_id')
+      .eq('reference', paymentReference)
+      .single();
+
+    if (!tx) throw new Error('Transaction not found');
+
+    if (paymentStatus === 'PAID') {
+      await supabase.rpc('increment_wallet_balance', { user_id: tx.user_id, amt: amountPaid });
+
+      await supabase
+        .from('transactions')
         .update({ status: 'success' })
         .eq('reference', paymentReference);
     } else {
-      // mark failed
-      await supabase.from('transactions')
+      await supabase
+        .from('transactions')
         .update({ status: 'failed' })
         .eq('reference', paymentReference);
     }
 
     res.status(200).send('OK');
   } catch (err) {
-    console.error('Webhook error', err);
-    res.status(500).send('Error');
+    console.error('Monnify callback error:', err);
+    res.status(500).send('Error processing callback');
   }
-});
-
-
-// export const withdraw = async (userId, amount) => {
-//   if (amount <= 0) throw new Error('Invalid withdrawal amount');
-
-//   // 1️⃣ Get current balance
-//   const { data: wallet, error: fetchError } = await supabase
-//     .from('savings')
-//     .select('amount')
-//     .eq('user_id', userId)
-//     .single();
-
-//   if (fetchError) throw fetchError;
-//   if (wallet.amount < amount) throw new Error('Insufficient balance');
-
-//   // 2️⃣ Mock payout API
-//   const payoutSuccess = true; // Replace with real API call
-//   if (!payoutSuccess) throw new Error('Payout failed');
-
-//   // 3️⃣ Update savings
-//   const { data: updatedWallet, error } = await supabase
-//     .from('savings')
-//     .update({ amount: supabase.raw('amount - ?', [amount]) })
-//     .eq('user_id', userId)
-//     .select();
-
-//   if (error) throw error;
-
-//   // 4️⃣ Log transaction
-//   await logTransaction(userId, amount, 'withdrawal', 'success');
-
-//   return updatedWallet[0];
-// };
-
-// // Get wallet balance
-// export const getBalance = async (userId) => {
-//   const { data, error } = await supabase
-//     .from('savings')
-//     .select('amount, goal')
-//     .eq('user_id', userId)
-//     .single();
-
-//   if (error) throw error;
-//   return data;
-// };
+};

@@ -1,4 +1,4 @@
-import { supabase } from '../supabaseClient.js';
+import { supabase } from '../config/supabaseClient.js';
 
 // Admin adds mentorship video
 export const addVideo = async (adminId, title, description, videoFile, language = 'english') => {

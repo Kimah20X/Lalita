@@ -11,7 +11,8 @@ import { authMiddleware } from "./scr/middleware/authMiddleware.js";
 import walletRoutes from './scr/routes/walletRoutes.js';
 import mentorshipRoutes from './scr/routes/mentorshipRoutes.js';
 import transactionRoutes from './scr/routes/transactionRoutes.js';
-
+import PaymentRoutes from "./scr/routes/paymentRoutes.js";
+import savingsRoutes from "./scr/routes/savingsRoutes.js";
 const PORT = process.env.PORT || 5050;
 
 import events from "events";
@@ -31,7 +32,9 @@ app.use("/api/translate", translateRoute);
 app.use('/api/wallets', walletRoutes);
 app.use('/api/mentorships', mentorshipRoutes);
 app.use('/api/transactions', transactionRoutes);
-
+app.use(authMiddleware);
+app.use("/api/payment", PaymentRoutes);
+app.use("/api/savings", savingsRoutes);
 
 app.get("/api/test-supabase", async (req, res) => {
   const { data, error } = await supabase.from("users").select("*").limit(1);
@@ -44,6 +47,6 @@ app.use(errorHandler);
 
 // Server
 app.listen(PORT, () => {
-  console.log(`Lalita backend running on port ${PORT}`);
+  console.log(`Lalita backend running on port http://localhost:${PORT}`);
 });
   
