@@ -46,7 +46,7 @@ app.get("/api/test-supabase", async (req, res) => {
 app.use(errorHandler);
 
 // Server
-app.listen(PORT, () => {
+app.listen(PORT,  "0.0.0.0", () => {
   console.log(`Lalita backend running on port http://localhost:${PORT}`);
 });
   
