@@ -86,6 +86,16 @@ create table if not exists languages (
   code text unique not null
 );
 
+-- WALLET / SAVINGS TABLE
+create table if not exists savings (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  amount numeric(12,2) default 0.00,
+  goal numeric(12,2) default 0.00,
+  status text default 'active',
+  created_at timestamp with time zone default now()
+);
+
 ------------------------------------------------------
 -- ✅ Insert default languages
 ------------------------------------------------------
